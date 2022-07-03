@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Title>Cortado.FSharp</Title>
+    <Description>Cortado.FSharp does the thing!</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <Optimize>true</Optimize>
+    <Tailcalls>true</Tailcalls>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="AssemblyInfo.fs" />
+    <Compile Include="SeqUtils.fs" />
+    <Compile Include="ISliceProvider.fs" />
+    <Compile Include="Literals.fs" />
+    <Compile Include="VectorSlicer.fs" />
+    <Compile Include="FactorCovariate.fs" />
+    <Compile Include="DataFrame.fs" />
+    <Compile Include="Tree.fs" />
+    <Compile Include="Split.fs" />
+    <Compile Include="Logistic.fs" />
+    <None Include="Script.fsx" />
+    <None Include="Script2.fsx" />
+    <None Include="Script3.fsx" />
+    <PackageReference Include="FeatherDotNet" Version="0.6.0" />
+    <PackageReference Include="NumSharp" Version="0.30.0" />
+  </ItemGroup>
+  <Import Project="..\..\.paket\Paket.Restore.targets" />
+</Project>
