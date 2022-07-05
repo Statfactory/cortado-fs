@@ -5,18 +5,20 @@ open Literals
 open XGSplit
 
 module Logistic =
+
+    let eps = Single.Epsilon
+
     let inline logit_g (yhat:float32) (y: float32) =
         yhat - y
 
     let inline logit_h(yhat: float32) =
-        let eps = Single.Epsilon
         max (yhat * (1.0f - yhat)) eps
 
     let inline logitraw(p: float32) =
-        -Math.Log(1.0 / float(p) - 1.0) |> float32
+        -Math.Log(float(1.0f / p - 1.0f)) |> float32
 
     let inline sigmoid(x: float32) =
-        1.0 / (1.0 + Math.Exp(-float(x))) |> float32
+        1.0f / (1.0f + float32(Math.Exp(-float(x))))
 
     let inline get_gh (yhatraw: float32[]) (label: Covariate) (g: float32[]) (h: float32[]) (sliceLen: int) =
         let n = g.Length

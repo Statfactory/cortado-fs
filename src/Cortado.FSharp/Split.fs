@@ -66,6 +66,81 @@ module XGSplit =
         let _  = get_hist_slice gsum hsum nodeIds nodecansplit factor gcovariate hcovariate start length slicelen
         (gsum, hsum)
 
+    let get_best_range_split (g_hist: Memory<float>) (h_hist: Memory<float>) (partition: bool[]) (lambda: float32) (minh: float32) =
+        let gsum = g_hist.ToArray() |> Array.sum
+        let hsum = h_hist.ToArray() |> Array.sum
+        let ghistSpan = g_hist.Span
+        let hhistSpan = h_hist.Span
+        let currloss = getloss gsum hsum lambda
+        let mutable bestloss = currloss
+        let mutable split_index = -1
+        let minh = float minh
+        let mutable miss_left = true
+        let miss_g = ghistSpan[0]
+        let miss_h = hhistSpan[0]
+        let miss_active = partition[0] && (miss_g + miss_h > 0.0) && miss_h >= minh
+        let mutable leftgsum = 0.0
+        let mutable lefthsum = 0.0
+        let mutable rightgsum = 0.0
+        let mutable righthsum = 0.0
+
+        let mutable gcumsum = 0.0
+        let mutable hcumsum = 0.0
+        if miss_active then
+            for i in 0..partition.Length - 2 do
+                if partition[i] then
+                    gcumsum <- gcumsum + ghistSpan[i]
+                    hcumsum <- hcumsum + hhistSpan[i]
+                    let loss_miss_left = getloss gcumsum hcumsum lambda + getloss (gsum - gcumsum) (hsum - hcumsum) lambda
+                    let loss_miss_right = if i = 0 then loss_miss_left else getloss (gcumsum - miss_g) (hcumsum - miss_h) lambda + getloss (gsum - gcumsum + miss_g) (hsum - hcumsum + miss_h) lambda
+                    if loss_miss_left < bestloss && (hcumsum >= minh) && (hsum - hcumsum >= minh) then
+                        bestloss <- loss_miss_left
+                        split_index <- i
+                        miss_left <- true
+                        leftgsum <- gcumsum
+                        lefthsum <- hcumsum
+                        rightgsum <- gsum - gcumsum
+                        righthsum <- hsum - hcumsum
+
+                    if loss_miss_right < bestloss && (hcumsum - miss_h >= minh) && (hsum - hcumsum + miss_h >= minh) then
+                        bestloss <- loss_miss_right
+                        split_index <- i
+                        miss_left <- false
+                        leftgsum <- if i = 0 then gcumsum else gcumsum - miss_g
+                        lefthsum <- if i = 0 then hcumsum else hcumsum - miss_h
+                        rightgsum <- if i = 0 then gsum - gcumsum else gsum - gcumsum + miss_g
+                        righthsum <- if i = 0 then hsum - hcumsum else hsum - hcumsum + miss_h
+
+        else
+            for i in 0.. partition.Length - 2 do
+                if partition[i] then
+                    gcumsum <- gcumsum + ghistSpan[i]
+                    hcumsum <- hcumsum + hhistSpan[i]
+                    let loss = getloss gcumsum hcumsum lambda + getloss (gsum - gcumsum) (hsum - hcumsum) lambda
+                    if loss < bestloss && (hcumsum >= minh) && (hsum - hcumsum >= minh) then
+                        bestloss <- loss
+                        split_index <- i
+                        miss_left <- true
+                        leftgsum <- gcumsum
+                        lefthsum <- hcumsum
+                        rightgsum <- gsum - gcumsum
+                        righthsum <- hsum - hcumsum
+
+        if split_index >= 0 then
+            let leftpartition = partition |> Array.copy
+            let rightpartition = partition |> Array.copy
+            for i in 0..partition.Length - 1 do
+                if partition[i] then
+                    if i = 0 && miss_active then
+                        leftpartition[i] <- miss_left
+                        rightpartition[i] <- miss_left |> not
+                    else
+                        leftpartition[i] <- i <= split_index
+                        rightpartition[i] <- i > split_index
+            (currloss, bestloss, leftpartition, rightpartition, leftgsum, lefthsum, rightgsum, righthsum)
+        else
+            (currloss, bestloss, partition, partition, 0.0, 0.0, 0.0, 0.0)
+
     let get_best_stump_split (g_hist: Memory<float>) (h_hist: Memory<float>) (partition: bool[]) (lambda: float32) (minh: float32) =
         let gsum = g_hist.ToArray() |> Array.sum
         let hsum = h_hist.ToArray() |> Array.sum
@@ -102,30 +177,41 @@ module XGSplit =
 
     let get_splitnode (factor: Factor) (leafnode: LeafInfo) (histogram: Memory<float> * Memory<float>) (lambda: float32) (minh: float32) =
 
-        let g_hist, h_hist = histogram
-        let partition = leafnode.Partitions[factor]
-
-        let currloss, bestloss, leftpartition, rightpartition, leftgsum, lefthsum, rightgsum, righthsum =
-            if factor.IsOrdinal then
-                //currloss, bestloss, leftpartition, rightpartition, leftgsum, lefthsum, rightgsum, righthsum = get_best_range_split(g_hist, h_hist, partition, lambda_, minh)
-                get_best_stump_split g_hist h_hist partition lambda minh
-            else
-                get_best_stump_split g_hist h_hist partition lambda minh
-
-        if bestloss < currloss then
-            let leftpartitions = Dictionary(leafnode.Partitions)
-            let rightpartitions = Dictionary(leafnode.Partitions)
-            leftpartitions[factor] <- leftpartition
-            rightpartitions[factor] <- rightpartition
-            let leftcansplit = true //any([np.sum(v) > 1 for k, v in leftpartitions.items()])
-            let rightcansplit = true // any([np.sum(v) > 1 for k, v in rightpartitions.items()])
-            let leftloss = getloss leftgsum lefthsum lambda
-            let rightloss = getloss rightgsum righthsum lambda
-            let leftnode = {GSum=leftgsum; HSum = lefthsum; CanSplit = leftcansplit; Partitions = leftpartitions; Loss = leftloss}
-            let rightnode = {GSum=rightgsum; HSum = righthsum; CanSplit = rightcansplit; Partitions = rightpartitions; Loss = rightloss}
-            Split({Factor = factor; LeftLeaf = leftnode; RightLeaf = rightnode; Loss = bestloss; Gain = currloss - bestloss})
-        else
+        let s = leafnode.Partitions[factor] |> Array.map (fun x -> if x then 1 else 0) |> Array.sum
+        if leafnode.CanSplit = false || s <= 1 then
             Leaf(leafnode)
+        else
+            let g_hist, h_hist = histogram
+            let partition = leafnode.Partitions[factor]
+
+            let currloss, bestloss, leftpartition, rightpartition, leftgsum, lefthsum, rightgsum, righthsum =
+                if factor.IsOrdinal then
+                    get_best_range_split g_hist h_hist partition lambda minh
+                else
+                    get_best_stump_split g_hist h_hist partition lambda minh
+
+            if bestloss < currloss then
+                let leftpartitions = Dictionary(leafnode.Partitions |> Seq.map (fun kv -> KeyValuePair(kv.Key, kv.Value |> Array.copy)))
+                let rightpartitions = Dictionary(leafnode.Partitions |> Seq.map (fun kv -> KeyValuePair(kv.Key, kv.Value |> Array.copy)))
+                leftpartitions[factor] <- leftpartition
+                rightpartitions[factor] <- rightpartition
+                let leftcansplit = leftpartitions |> Seq.map
+                                       (fun x -> x.Value
+                                                        |> Array.map (fun x -> if x then 1 else 0)
+                                                        |> Array.sum > 1)
+                                                    |> Seq.fold (||) false
+                let rightcansplit = rightpartitions |> Seq.map
+                                       (fun x -> x.Value
+                                                        |> Array.map (fun x -> if x then 1 else 0)
+                                                        |> Array.sum > 1)
+                                                    |> Seq.fold (||) false
+                let leftloss = getloss leftgsum lefthsum lambda
+                let rightloss = getloss rightgsum righthsum lambda
+                let leftnode = {GSum=leftgsum; HSum = lefthsum; CanSplit = leftcansplit; Partitions = leftpartitions; Loss = leftloss}
+                let rightnode = {GSum=rightgsum; HSum = righthsum; CanSplit = rightcansplit; Partitions = rightpartitions; Loss = rightloss}
+                Split({Factor = factor; LeftLeaf = leftnode; RightLeaf = rightnode; Loss = bestloss; Gain = currloss - bestloss})
+            else
+                Leaf(leafnode)
 
     let getnewsplit (histograms: float[] * float[]) (nodes: LeafInfo list) (factor: Factor) (lambda: float32) (gamma: float32) (minh: float32) =
         let levelCount = factor.Levels.Length
@@ -206,7 +292,7 @@ module XGSplit =
                     factorindex[i] <- -1
 
         let maxlevelcount = nodes |> List.map (fun v -> match v with | Split(s) -> s.Factor.Levels.Length | _ -> 0)
-                                             |> List.max
+                                        |> List.max
 
         let leftpartitions = Array.zeroCreate<bool> (nodecount * maxlevelcount)
         nodes |> List.iteri (fun i n ->

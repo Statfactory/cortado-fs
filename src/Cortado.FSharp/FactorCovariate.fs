@@ -98,7 +98,7 @@ and Covariate(name : string, length : int, sliceProvider: ISliceProvider<float32
                 let cut0 = cutsSpan[mid]
                 let cut1 = cutsSpan[mid + 1]
                 if (x > cut0 && x <= cut1) then
-                    mid
+                    mid + 1
                 else if (x <= cut0) then
                     searchSorted cuts x fromInd mid
                 else
@@ -110,7 +110,7 @@ and Covariate(name : string, length : int, sliceProvider: ISliceProvider<float32
                     let bufferSpan  = buffer.Span
                     let k = cuts.Length - 1
                     for i in 0..n - 1 do
-                        bufferSpan[i] <- searchSorted cuts sliceSpan[i] 1 k
+                        bufferSpan[i] <- searchSorted cuts sliceSpan[i] 0 k
                     if buffer.Length > n then
                         buffer.Slice(0, n)
                     else
@@ -140,11 +140,11 @@ and Covariate(name : string, length : int, sliceProvider: ISliceProvider<float32
                             sliceProvider.GetSlices(start, length, sliceLen) |> Seq.map (convert (buffer.AsMemory()) (cuts.AsMemory()))
                     }
 
-        let levels = Array.zeroCreate<string>(cuts.Length - 1)
+        let levels = Array.zeroCreate<string>cuts.Length
         levels[0] <- MissingLevel
         for i in 0..cuts.Length - 2 do
             let z = if i = 0 then "[" else "("
-            levels[i] <- $"{z}{cuts[i]},{cuts[i + 1]}]"
+            levels[i + 1] <- $"{z}{cuts[i]},{cuts[i + 1]}]"
 
         Factor(name, length, levels, sliceProvider, true)
 
