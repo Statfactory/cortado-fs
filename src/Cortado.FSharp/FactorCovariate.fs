@@ -2,7 +2,6 @@ namespace Cortado.FSharp
 
 open System
 open System.Collections.Generic
-open NumSharp
 open Literals
 
 type Factor(name : string, length : int, levels: string[], sliceProvider: ISliceProvider<int>, isOrdinal: bool) =
@@ -76,10 +75,10 @@ and Covariate(name : string, length : int, sliceProvider: ISliceProvider<float32
     new(name: string, vector: float32[]) =
         Covariate(name, vector.Length, VectorSlicer(vector))
 
-    member _.Name with get() = name
-    member _.Length with get() = length
-    member _.SliceProvider with get() = sliceProvider
-    member _.AsFactor() =
+    member this.Name with get() = name
+    member this.Length with get() = length
+    member this.SliceProvider with get() = sliceProvider
+    member this.AsFactor() =
 
         let folder (acc:Dictionary<float32, float32>) (slice: Memory<float32>) =
             let span = slice.Span
@@ -148,20 +147,24 @@ and Covariate(name : string, length : int, sliceProvider: ISliceProvider<float32
 
         Factor(name, length, levels, sliceProvider, true)
 
-    member _.AsCached() =
-        let cache = Array.zeroCreate<float32>(length)
+    member this.AsCached() =
+        let cache = this.ToArray()
+
+        Covariate(name, length, VectorSlicer(cache.AsMemory()))
+
+    member this.ToArray() =
+        let arr = Array.zeroCreate<float32>(length)
 
         let folder (offset: int) (slice: Memory<float32>) =
             let n = slice.Length
-            let cacheSpan = cache.AsSpan()
+            let cacheSpan = arr.AsSpan()
             let sliceSpan = slice.Span
             for i in 0..n - 1 do
                 cacheSpan[offset + i] <- sliceSpan[i]
             offset + n
 
         sliceProvider.GetSlices(0, length, SliceLength) |> Seq.fold folder 0 |> ignore
-
-        Covariate(name, length, VectorSlicer(cache))
+        arr
 
     override _.ToString() =
         let k = min HeadLength length

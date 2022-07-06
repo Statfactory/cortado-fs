@@ -1,7 +1,6 @@
 namespace Cortado.FSharp
 
 open System
-open NumSharp
 open FeatherDotNet
 open System.Reflection
 open Literals

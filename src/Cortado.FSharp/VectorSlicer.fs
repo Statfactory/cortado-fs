@@ -1,7 +1,5 @@
 namespace Cortado.FSharp
-open NumSharp
 open SeqUtils
-
 open System
 
 type VectorSlicer<'a>(vector: Memory<'a>) =

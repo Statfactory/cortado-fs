@@ -22,11 +22,8 @@
     <Compile Include="Tree.fs" />
     <Compile Include="Split.fs" />
     <Compile Include="Logistic.fs" />
-    <None Include="Script.fsx" />
-    <None Include="Script2.fsx" />
-    <None Include="Script3.fsx" />
+    <None Include="XGRun.fsx" />
     <PackageReference Include="FeatherDotNet" Version="0.6.0" />
-    <PackageReference Include="NumSharp" Version="0.30.0" />
   </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>

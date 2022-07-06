@@ -6,10 +6,10 @@ open SeqUtils
 
 module XGSplit =
 
-    let getloss (g: float) (h: float) (lambda: float32) =
+    let inline getLoss (g: float) (h: float) (lambda: float32) =
         -(g * g) / (h + float lambda)
 
-    let f_splitnode (issplitnode: bool[]) (leftpartitions: bool[]) (maxlevelcount: int) (factorindex: int[]) (nodemap: int[]) (nodeIdSlice: Memory<int>, fslices: Memory<int>) =
+    let mapSplitNode (issplitnode: bool[]) (leftpartitions: bool[]) (maxlevelcount: int) (factorindex: int[]) (nodemap: int[]) (nodeIdSlice: Memory<int>, fslices: Memory<int>) =
         let slicelen = nodeIdSlice.Length
         let nodeIdSliceSpan = nodeIdSlice.Span
         let fslicesSpan = fslices.Span
@@ -25,7 +25,7 @@ module XGSplit =
             else
                 nodeIdSliceSpan[i] <- nodemap[nodeIdSliceSpan[i]]
 
-    let f_hist (acc0: float[]* float[]*bool[]*int) (zipslice: Memory<int> * Memory<int> * Memory<float32> * Memory<float32>) =
+    let foldHist (acc0: float[]* float[]*bool[]*int) (zipslice: Memory<int> * Memory<int> * Memory<float32> * Memory<float32>) =
         let nodeslice, factorslice, gslice, hslice = zipslice
         let gsum, hsum, nodecansplit, levelCount = acc0
         let nodesliceSpan = nodeslice.Span
@@ -40,7 +40,7 @@ module XGSplit =
                 hsum[nodeid * levelCount + levelindex] <- float(hsliceSpan[i]) + hsum[nodeid * levelCount + levelindex]
         (gsum, hsum, nodecansplit, levelCount)
 
-    let get_hist_slice (gsum0) (hsum0) (nodeids: int[]) (nodecansplit) (factor: Factor) (gcovariate: Covariate) (hcovariate: Covariate)
+    let getHistSlice (gsum0) (hsum0) (nodeids: int[]) (nodecansplit) (factor: Factor) (gcovariate: Covariate) (hcovariate: Covariate)
                        (start) (length) (slicelen) =
 
         let nodeIdsSlicer = VectorSlicer(nodeids.AsMemory()):>ISliceProvider<int>
@@ -50,9 +50,9 @@ module XGSplit =
         let gslices = gcovariate.SliceProvider.GetSlices(start, length, slicelen)
         let hslices = hcovariate.SliceProvider.GetSlices(start, length, slicelen)
         let zipslices = SeqUtils.zip4 nodeslices factorslices gslices hslices
-        zipslices |> Seq.fold f_hist (gsum0, hsum0, nodecansplit, levelCount)
+        zipslices |> Seq.fold foldHist (gsum0, hsum0, nodecansplit, levelCount)
 
-    let get_histogram (nodeIds: int[]) (nodecansplit: bool[]) (factor: Factor) (gcovariate: Covariate)
+    let getHistogram (nodeIds: int[]) (nodecansplit: bool[]) (factor: Factor) (gcovariate: Covariate)
                       (hcovariate: Covariate) (slicelen: int) =
 
         let nodecount = nodecansplit.Length
@@ -63,15 +63,15 @@ module XGSplit =
         let gsum = Array.zeroCreate<float> (nodecount * levelcount)
         let hsum = Array.zeroCreate<float> (nodecount * levelcount)
 
-        let _  = get_hist_slice gsum hsum nodeIds nodecansplit factor gcovariate hcovariate start length slicelen
+        let _  = getHistSlice gsum hsum nodeIds nodecansplit factor gcovariate hcovariate start length slicelen
         (gsum, hsum)
 
-    let get_best_range_split (g_hist: Memory<float>) (h_hist: Memory<float>) (partition: bool[]) (lambda: float32) (minh: float32) =
+    let getBestRangeSplit (g_hist: Memory<float>) (h_hist: Memory<float>) (partition: bool[]) (lambda: float32) (minh: float32) =
         let gsum = g_hist.ToArray() |> Array.sum
         let hsum = h_hist.ToArray() |> Array.sum
         let ghistSpan = g_hist.Span
         let hhistSpan = h_hist.Span
-        let currloss = getloss gsum hsum lambda
+        let currloss = getLoss gsum hsum lambda
         let mutable bestloss = currloss
         let mutable split_index = -1
         let minh = float minh
@@ -91,8 +91,8 @@ module XGSplit =
                 if partition[i] then
                     gcumsum <- gcumsum + ghistSpan[i]
                     hcumsum <- hcumsum + hhistSpan[i]
-                    let loss_miss_left = getloss gcumsum hcumsum lambda + getloss (gsum - gcumsum) (hsum - hcumsum) lambda
-                    let loss_miss_right = if i = 0 then loss_miss_left else getloss (gcumsum - miss_g) (hcumsum - miss_h) lambda + getloss (gsum - gcumsum + miss_g) (hsum - hcumsum + miss_h) lambda
+                    let loss_miss_left = getLoss gcumsum hcumsum lambda + getLoss (gsum - gcumsum) (hsum - hcumsum) lambda
+                    let loss_miss_right = if i = 0 then loss_miss_left else getLoss (gcumsum - miss_g) (hcumsum - miss_h) lambda + getLoss (gsum - gcumsum + miss_g) (hsum - hcumsum + miss_h) lambda
                     if loss_miss_left < bestloss && (hcumsum >= minh) && (hsum - hcumsum >= minh) then
                         bestloss <- loss_miss_left
                         split_index <- i
@@ -116,7 +116,7 @@ module XGSplit =
                 if partition[i] then
                     gcumsum <- gcumsum + ghistSpan[i]
                     hcumsum <- hcumsum + hhistSpan[i]
-                    let loss = getloss gcumsum hcumsum lambda + getloss (gsum - gcumsum) (hsum - hcumsum) lambda
+                    let loss = getLoss gcumsum hcumsum lambda + getLoss (gsum - gcumsum) (hsum - hcumsum) lambda
                     if loss < bestloss && (hcumsum >= minh) && (hsum - hcumsum >= minh) then
                         bestloss <- loss
                         split_index <- i
@@ -141,19 +141,19 @@ module XGSplit =
         else
             (currloss, bestloss, partition, partition, 0.0, 0.0, 0.0, 0.0)
 
-    let get_best_stump_split (g_hist: Memory<float>) (h_hist: Memory<float>) (partition: bool[]) (lambda: float32) (minh: float32) =
+    let getBestStumpSplit (g_hist: Memory<float>) (h_hist: Memory<float>) (partition: bool[]) (lambda: float32) (minh: float32) =
         let gsum = g_hist.ToArray() |> Array.sum
         let hsum = h_hist.ToArray() |> Array.sum
         let ghistSpan = g_hist.Span
         let hhistSpan = h_hist.Span
-        let currloss = getloss gsum hsum lambda
+        let currloss = getLoss gsum hsum lambda
         let mutable bestloss = currloss
         let mutable stump_index = -1
         let minh = float minh
 
         for i in 0..partition.Length - 1 do
             if partition[i] then
-                let loss = (getloss ghistSpan[i] hhistSpan[i] lambda) + getloss (gsum - ghistSpan[i]) (hsum - hhistSpan[i]) lambda
+                let loss = (getLoss ghistSpan[i] hhistSpan[i] lambda) + getLoss (gsum - ghistSpan[i]) (hsum - hhistSpan[i]) lambda
                 if loss < bestloss && (hhistSpan[i] >= minh) && (hsum - hhistSpan[i] >= minh) then
                     bestloss <- loss
                     stump_index <- i
@@ -175,7 +175,7 @@ module XGSplit =
         else
             (currloss, bestloss, partition, partition, 0.0, 0.0, 0.0, 0.0)
 
-    let get_splitnode (factor: Factor) (leafnode: LeafInfo) (histogram: Memory<float> * Memory<float>) (lambda: float32) (minh: float32) =
+    let getSplitNode (factor: Factor) (leafnode: LeafInfo) (histogram: Memory<float> * Memory<float>) (lambda: float32) (minh: float32) =
 
         let s = leafnode.Partitions[factor] |> Array.map (fun x -> if x then 1 else 0) |> Array.sum
         if leafnode.CanSplit = false || s <= 1 then
@@ -186,9 +186,9 @@ module XGSplit =
 
             let currloss, bestloss, leftpartition, rightpartition, leftgsum, lefthsum, rightgsum, righthsum =
                 if factor.IsOrdinal then
-                    get_best_range_split g_hist h_hist partition lambda minh
+                    getBestRangeSplit g_hist h_hist partition lambda minh
                 else
-                    get_best_stump_split g_hist h_hist partition lambda minh
+                    getBestStumpSplit g_hist h_hist partition lambda minh
 
             if bestloss < currloss then
                 let leftpartitions = Dictionary(leafnode.Partitions |> Seq.map (fun kv -> KeyValuePair(kv.Key, kv.Value |> Array.copy)))
@@ -205,23 +205,23 @@ module XGSplit =
                                                         |> Array.map (fun x -> if x then 1 else 0)
                                                         |> Array.sum > 1)
                                                     |> Seq.fold (||) false
-                let leftloss = getloss leftgsum lefthsum lambda
-                let rightloss = getloss rightgsum righthsum lambda
+                let leftloss = getLoss leftgsum lefthsum lambda
+                let rightloss = getLoss rightgsum righthsum lambda
                 let leftnode = {GSum=leftgsum; HSum = lefthsum; CanSplit = leftcansplit; Partitions = leftpartitions; Loss = leftloss}
                 let rightnode = {GSum=rightgsum; HSum = righthsum; CanSplit = rightcansplit; Partitions = rightpartitions; Loss = rightloss}
                 Split({Factor = factor; LeftLeaf = leftnode; RightLeaf = rightnode; Loss = bestloss; Gain = currloss - bestloss})
             else
                 Leaf(leafnode)
 
-    let getnewsplit (histograms: float[] * float[]) (nodes: LeafInfo list) (factor: Factor) (lambda: float32) (gamma: float32) (minh: float32) =
+    let getNewSplit (histograms: float[] * float[]) (nodes: LeafInfo list) (factor: Factor) (lambda: float32) (gamma: float32) (minh: float32) =
         let levelCount = factor.Levels.Length
         let g, h = histograms
         nodes |> List.mapi (fun i node ->
             let hist = g.AsMemory().Slice(i * levelCount, levelCount), h.AsMemory().Slice(i * levelCount, levelCount)
-            get_splitnode factor node hist lambda minh
+            getSplitNode factor node hist lambda minh
         )
 
-    let findbestsplit (state: TreeGrowState) =
+    let findBestSplit (state: TreeGrowState) =
         let (XGTree layers) = state.XGTree
         let (TreeLayer lastLayer) = layers |> List.last
 
@@ -230,9 +230,9 @@ module XGSplit =
         let mingain = state.Gamma |> float
 
         let f (currSplit: DecisionNode list) (factor: Factor) =
-            let histograms = get_histogram state.NodeIds nodecansplit factor state.GCovariate state.HCovariate state.SliceLength
+            let histograms = getHistogram state.NodeIds nodecansplit factor state.GCovariate state.HCovariate state.SliceLength
 
-            let newsplit = getnewsplit histograms lastLayer factor state.Lambda state.Gamma state.MinH
+            let newsplit = getNewSplit histograms lastLayer factor state.Lambda state.Gamma state.MinH
             currSplit |> List.zip newsplit |> List.map (fun (newNode, currNode) ->
                                                        match newNode with
                                                            | Split(s) ->
@@ -248,19 +248,19 @@ module XGSplit =
         let decisionNodes0 = lastLayer |> List.map Leaf
         state.Factors |> Array.fold f decisionNodes0
 
-    let f_weights (nodeIds: int[]) (weights: float32[]) (fm: float32[]) (eta: float32) =
+    let getWeights (nodeIds: int[]) (weights: float32[]) (fm: float32[]) (eta: float32) =
         for i in 0..nodeIds.Length - 1 do
             fm[i] <- eta * weights[nodeIds[i]] + fm[i]
 
-    let splitnodeidsslice (nodeIds: int[]) (factors: Factor[]) (issplitnode: bool[]) (nodemap: int[]) (leftpartitions: bool[]) (maxlevelcount: int) (factorindex: int[])
+    let splitNodeIdsSlice (nodeIds: int[]) (factors: Factor[]) (issplitnode: bool[]) (nodemap: int[]) (leftpartitions: bool[]) (maxlevelcount: int) (factorindex: int[])
                           (start: int) (length: int) (slicelength: int) =
         if factors.Length > 0 then
             let factorslices = factors |> Array.map (fun f -> f.SliceProvider.GetSlices(start, length,slicelength))
                                                             |> SeqUtils.zipNMem
             let nodeslices = (VectorSlicer(nodeIds):>ISliceProvider<int>).GetSlices(start, length, slicelength)
-            factorslices |> Seq.zip nodeslices |> Seq.iter (f_splitnode issplitnode leftpartitions maxlevelcount factorindex nodemap)
+            factorslices |> Seq.zip nodeslices |> Seq.iter (mapSplitNode issplitnode leftpartitions maxlevelcount factorindex nodemap)
 
-    let splitnodeids (nodeIds: int[]) (nodes: DecisionNode list) (slicelength: int) =
+    let splitNodeIds (nodeIds: int[]) (nodes: DecisionNode list) (slicelength: int) =
         let nodecount = nodes.Length
         let length = nodeIds.Length
         let start = 0
@@ -303,11 +303,11 @@ module XGSplit =
                 | _ -> ()
         )
         let factors = factors.ToArray()
-        splitnodeidsslice nodeIds factors issplitnode nodemap leftpartitions maxlevelcount factorindex start length slicelength
+        splitNodeIdsSlice nodeIds factors issplitnode nodemap leftpartitions maxlevelcount factorindex start length slicelength
         nodeIds
 
     let updatestate (state: TreeGrowState) (layernodes: DecisionNode list) =
-        let newNodeIds = splitnodeids state.NodeIds layernodes state.SliceLength
+        let newNodeIds = splitNodeIds state.NodeIds layernodes state.SliceLength
         let newLayer = layernodes |> List.collect (fun node ->
                                   match node with
                                       | Split(n) -> [n.LeftLeaf; n.RightLeaf]
@@ -317,7 +317,7 @@ module XGSplit =
         {state with NodeIds = newNodeIds; XGTree = XGTree(layers @ [TreeLayer(newLayer)])}
 
     let nextLayer (state: TreeGrowState) (step: int) =
-        let layerNodes = findbestsplit state
+        let layerNodes = findBestSplit state
         updatestate state layerNodes
 
     let predict (nodes: LeafInfo list) (nodeIds: int[]) (fm: float32[]) (eta: float32) (lambda) =
@@ -327,7 +327,7 @@ module XGSplit =
             let node = nodes[i]
             weights[i] <- -node.GSum / (node.HSum + lambda) |> float32
 
-        f_weights nodeIds weights fm eta
+        getWeights nodeIds weights fm eta
 
     let growTree (factors) (gcovariate: Covariate) (hcovariate: Covariate) (fm: float32[]) (eta: float32) (maxDepth: int)
                   (lambda) (gamma) (minh) (slicelen) =
